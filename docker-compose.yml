@@ -1,0 +1,29 @@
+
+volumes:
+  ccdn-data:
+
+
+services:
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginxproxy/nginx-proxy}:alpine
+    pull_policy: ${NGINX_PULL_POLICY:-always}
+    volumes:
+      - '/var/run/docker.sock:/tmp/docker.sock:ro'
+      - './certs:/etc/ssl/certs'
+      - './nginx/nginx.conf:/etc/nginx/nginx.conf'
+      - './nginx/sites-enabled:/etc/nginx/sites-enabled'
+
+  ccdn:
+    image: ghcr.io/dnpm-dip/central-data-node:${ENV_IMAGE_TAG:-latest}
+#    pull_policy: ${CCDN_PULL_POLICY:-always}
+    restart: unless-stopped
+    environment:
+      - CCDN_BROKER_BASEURL=${ENV_CCDN_BROKER_BASEURL:-http://nginx:9010}
+      - CCDN_BFARM_API_BASEURL=${ENV_CCDN_BFARM_API_BASEURL:-https://mvgenomseq.bfarm.de}
+      - CCDN_BFARM_AUTH_URL=${ENV_CCDN_BFARM_AUTH_URL:-https://mvgenomseq.bfarm.de/realms/mvgenomseq/protocol/openid-connect/token}
+      - CCDN_BFARM_AUTH_CLIENT_ID=${ENV_CCDN_BFARM_AUTH_CLIENT_ID}
+      - CCDN_BFARM_AUTH_CLIENT_SECRET=${ENV_CCDN_BFARM_AUTH_CLIENT_SECRET}
+    volumes:
+      - ccdn-data:/ccdn_data
+      - './config:/ccdn_config'
