@@ -15,8 +15,8 @@ services:
       - './nginx/sites-enabled:/etc/nginx/sites-enabled'
 
   ccdn:
-    image: ghcr.io/dnpm-dip/central-data-node:${ENV_IMAGE_TAG:-latest}
-#    pull_policy: ${CCDN_PULL_POLICY:-always}
+    image: ${CCDN_IMAGE:-ghcr.io/dnpm-dip/central-data-node}:${CCDN_IMAGE_TAG:-latest}
+    pull_policy: ${CCDN_PULL_POLICY:-always}
     restart: unless-stopped
     environment:
       - CCDN_BROKER_BASEURL=${ENV_CCDN_BROKER_BASEURL:-http://nginx:9010}
