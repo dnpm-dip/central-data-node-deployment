@@ -24,6 +24,7 @@ services:
       - CCDN_BFARM_AUTH_URL=${ENV_CCDN_BFARM_AUTH_URL:-https://mvgenomseq.bfarm.de/realms/mvgenomseq/protocol/openid-connect/token}
       - CCDN_BFARM_AUTH_CLIENT_ID=${ENV_CCDN_BFARM_AUTH_CLIENT_ID}
       - CCDN_BFARM_AUTH_CLIENT_SECRET=${ENV_CCDN_BFARM_AUTH_CLIENT_SECRET}
+      - TZ=${LOCAL_TIMEZONE:-Europe/Berlin}
     volumes:
       - ccdn-data:/ccdn_data
       - './config:/ccdn_config'
