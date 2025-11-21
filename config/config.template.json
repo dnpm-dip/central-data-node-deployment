@@ -59,6 +59,9 @@
     "UKK": {
       "submitterId": "260530283", "gdcId": "GRZK00001", "useCases": ["MTB","RD"]
     },
+    "UKL": {
+      "submitterId": "261401052", "gdcId": "GRZDD0004", "useCases": ["RD"]
+    },
     "UKM": {
       "submitterId": "260550131", "gdcId": "GRZK00001", "useCases": ["MTB","RD"]
     },
