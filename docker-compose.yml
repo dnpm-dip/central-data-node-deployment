@@ -20,6 +20,7 @@ services:
     restart: unless-stopped
     environment:
       - CCDN_BROKER_BASEURL=${ENV_CCDN_BROKER_BASEURL:-http://nginx:9010}
+      - CCDN_BROKER_CONNECTOR_TIMEOUT=${ENV_CCDN_BROKER_CONNECTOR_TIMEOUT:-10}
       - CCDN_BFARM_API_URL=${ENV_CCDN_BFARM_API_URL:-https://mvgenomseq.bfarm.de/api/upload}
       - CCDN_BFARM_AUTH_URL=${ENV_CCDN_BFARM_AUTH_URL:-https://mvgenomseq.bfarm.de/realms/mvgenomseq/protocol/openid-connect/token}
       - CCDN_BFARM_AUTH_CLIENT_ID=${ENV_CCDN_BFARM_AUTH_CLIENT_ID}
