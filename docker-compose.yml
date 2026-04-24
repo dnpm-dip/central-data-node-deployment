@@ -14,10 +14,19 @@ services:
       - './nginx/nginx.conf:/etc/nginx/nginx.conf'
       - './nginx/sites-enabled:/etc/nginx/sites-enabled'
 
+  mongodb:
+    image: mongo:8
+    restart: unless-stopped
+    command: mongod --dbpath /ccdn_data/mongodb
+    volumes:
+      - ccdn-data:/ccdn_data
+
   ccdn:
     image: ${CCDN_IMAGE:-ghcr.io/dnpm-dip/central-data-node}:${CCDN_IMAGE_TAG:-latest}
     pull_policy: ${CCDN_PULL_POLICY:-always}
     restart: unless-stopped
+    depends_on:
+      - mongodb
     environment:
       - CCDN_BROKER_BASEURL=${ENV_CCDN_BROKER_BASEURL:-http://nginx:9010}
       - CCDN_BROKER_CONNECTOR_TIMEOUT=${ENV_CCDN_BROKER_CONNECTOR_TIMEOUT:-10}
@@ -26,6 +35,7 @@ services:
       - CCDN_BFARM_AUTH_CLIENT_ID=${ENV_CCDN_BFARM_AUTH_CLIENT_ID}
       - CCDN_BFARM_AUTH_CLIENT_SECRET=${ENV_CCDN_BFARM_AUTH_CLIENT_SECRET}
       - TZ=${LOCAL_TIMEZONE:-Europe/Berlin}
+      - CCDN_MONGODB_URI=${ENV_CCDN_MONGODB_URI:-mongodb://mongodb:27017/ccdn}
     volumes:
       - ccdn-data:/ccdn_data
       - './config:/ccdn_config'
