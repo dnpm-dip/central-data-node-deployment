@@ -1,3 +1,6 @@
 .idea
 .env
 CLAUDE.md
+config/config.json
+config/logback.xml
+/nginx/sites-enabled/forward-proxy.conf
