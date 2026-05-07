@@ -2,12 +2,17 @@
 volumes:
   ccdn-data:
 
+networks:
+  frontend:
+  backend:
+
 
 services:
 
   nginx:
     image: ${NGINX_IMAGE:-nginxproxy/nginx-proxy}:alpine
     pull_policy: ${NGINX_PULL_POLICY:-always}
+    networks: [frontend]
     volumes:
       - '/var/run/docker.sock:/tmp/docker.sock:ro'
       - './certs:/etc/ssl/certs'
@@ -17,6 +22,7 @@ services:
   mongodb:
     image: mongo:8
     restart: unless-stopped
+    networks: [backend]
     command: bash -c "mkdir -p /ccdn_data/mongodb && mongod --dbpath /ccdn_data/mongodb --bind_ip_all"
     volumes:
       - ccdn-data:/ccdn_data
@@ -24,6 +30,7 @@ services:
   siteLogDump:
     image: mongo:8 # could also make a custom container from mongodb-database-tools
     restart: no
+    networks: [backend]
     profiles:
       - "logdump" #excludes from typical "docker compose up"
     volumes:
@@ -41,6 +48,7 @@ services:
     image: ${CCDN_IMAGE:-ghcr.io/dnpm-dip/central-data-node}:${CCDN_IMAGE_TAG:-latest}
     pull_policy: ${CCDN_PULL_POLICY:-always}
     restart: unless-stopped
+    networks: [frontend, backend]
     depends_on:
       - mongodb
     environment:
