@@ -26,6 +26,12 @@ services:
     command: bash -c "mkdir -p /ccdn_data/mongodb && mongod --dbpath /ccdn_data/mongodb --bind_ip_all"
     volumes:
       - ccdn-data:/ccdn_data
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   siteLogDump:
     image: mongo:8 # could also make a custom container from mongodb-database-tools
@@ -36,7 +42,8 @@ services:
     volumes:
       - ccdn-data:/ccdn_data
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint: >
       sh -c "
         mkdir /ccdn_data/siteAvailabilityLogDump ;\
@@ -50,7 +57,8 @@ services:
     restart: unless-stopped
     networks: [frontend, backend]
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     environment:
       - CCDN_BROKER_BASEURL=${ENV_CCDN_BROKER_BASEURL:-http://nginx:9010}
       - CCDN_BROKER_CONNECTOR_TIMEOUT=${ENV_CCDN_BROKER_CONNECTOR_TIMEOUT:-10}
