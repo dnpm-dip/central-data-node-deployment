@@ -18,7 +18,7 @@ for templateFile in nginx/sites-available/*.template.*; do
 
    file=nginx/sites-enabled/${name/.template}
 
-  if [ ! -f file ]; then cp ${templateFile} ${file}; fi
+  if [ ! -f $file ]; then cp ${templateFile} ${file}; fi
 done
 
 

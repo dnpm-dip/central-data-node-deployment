@@ -2,22 +2,62 @@
 volumes:
   ccdn-data:
 
+networks:
+  clinic_vpn:
+  persistence:
+
 
 services:
 
   nginx:
     image: ${NGINX_IMAGE:-nginxproxy/nginx-proxy}:alpine
     pull_policy: ${NGINX_PULL_POLICY:-always}
+    networks: [ clinic_vpn ]
     volumes:
       - '/var/run/docker.sock:/tmp/docker.sock:ro'
       - './certs:/etc/ssl/certs'
       - './nginx/nginx.conf:/etc/nginx/nginx.conf'
       - './nginx/sites-enabled:/etc/nginx/sites-enabled'
 
+  mongodb:
+    image: mongo:8
+    restart: unless-stopped
+    networks: [ persistence ]
+    command: bash -c "mkdir -p /ccdn_data/mongodb && mongod --dbpath /ccdn_data/mongodb --bind_ip_all"
+    volumes:
+      - ccdn-data:/ccdn_data
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  siteLogDump:
+    image: mongo:8 # could also make a custom container from mongodb-database-tools
+    restart: no
+    networks: [ persistence ]
+    profiles:
+      - "logdump" #excludes from typical "docker compose up"
+    volumes:
+      - ccdn-data:/ccdn_data
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mkdir /ccdn_data/siteAvailabilityLogDump ;\
+        mongoexport --host mongodb --db ccdn --collection siteAvailability --jsonArray --pretty --out /ccdn_data/siteAvailabilityLogDump/`date --iso-8601`.json"
+
+
   ccdn:
     image: ${CCDN_IMAGE:-ghcr.io/dnpm-dip/central-data-node}:${CCDN_IMAGE_TAG:-latest}
     pull_policy: ${CCDN_PULL_POLICY:-always}
     restart: unless-stopped
+    networks: [ clinic_vpn, persistence ]
+    depends_on:
+      mongodb:
+        condition: service_healthy
     environment:
       - CCDN_BROKER_BASEURL=${ENV_CCDN_BROKER_BASEURL:-http://nginx:9010}
       - CCDN_BROKER_CONNECTOR_TIMEOUT=${ENV_CCDN_BROKER_CONNECTOR_TIMEOUT:-10}
@@ -26,6 +66,7 @@ services:
       - CCDN_BFARM_AUTH_CLIENT_ID=${ENV_CCDN_BFARM_AUTH_CLIENT_ID}
       - CCDN_BFARM_AUTH_CLIENT_SECRET=${ENV_CCDN_BFARM_AUTH_CLIENT_SECRET}
       - TZ=${LOCAL_TIMEZONE:-Europe/Berlin}
+      - CCDN_MONGODB_URI=${ENV_CCDN_MONGODB_URI:-mongodb://mongodb:27017/ccdn}
     volumes:
       - ccdn-data:/ccdn_data
       - './config:/ccdn_config'
