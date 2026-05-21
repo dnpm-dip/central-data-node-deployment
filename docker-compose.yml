@@ -47,8 +47,7 @@ services:
     entrypoint: >
       sh -c "
         mkdir /ccdn_data/siteAvailabilityLogDump ;\
-        mongoexport --host mongodb --db ccdn --collection siteAvailability \
-          --out /ccdn_data/siteAvailabilityLogDump/`date --iso-8601`.json"
+        mongoexport --host mongodb --db ccdn --collection siteAvailability --jsonArray --pretty --out /ccdn_data/siteAvailabilityLogDump/`date --iso-8601`.json"
 
 
   ccdn:
