@@ -11,6 +11,9 @@
     "Charité": {
       "submitterId": "261101015", "gdcId": "GRZB00007", "useCases": ["MTB","RD"]
     },
+    "KKB": {
+      "submitterId": "260590071", "gdcId": "GRZDD0004", "useCases": ["RD"]
+    },
     "KUM": {
       "submitterId": "260914050", "gdcId": "GRZM00006", "useCases": ["MTB","RD"]
     },
@@ -28,6 +31,9 @@
     },
     "UMG": {
       "submitterId": "260310378", "gdcId": "GRZTUE002", "useCases": ["MTB","RD"]
+    },
+    "UMH": {
+      "submitterId": "261500702", "gdcId": "GRZDD0004", "useCases": ["MTB","RD"]
     },
     "UKA": {
       "submitterId": "260530012", "gdcId": "GRZK00001", "useCases": ["MTB","RD"]
