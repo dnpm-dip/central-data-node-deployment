@@ -24,7 +24,7 @@
       "submitterId": "260913195", "gdcId": "GRZM00006", "useCases": ["MTB","RD"]
     },
     "UM": {
-      "submitterId": "260730161", "gdcId": "GRZHD0003", "useCases": ["MTB"]
+      "submitterId": "260730161", "gdcId": "GRZHD0003", "useCases": ["MTB","RD"]
     },
     "UME": {
       "submitterId": "260510381", "gdcId": "GRZK00001", "useCases": ["RD"]
