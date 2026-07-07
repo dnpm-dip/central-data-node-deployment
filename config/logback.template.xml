@@ -31,4 +31,10 @@
     <appender-ref ref="FILE"/>
   </root>
 
+  <!-- increased loglevel for business logic -->
+  <!-- <logger name="de.dnpm.ccdn" level="DEBUG" /> -->
+
+  <!-- decreased loglevel for mongodb driver -->
+  <logger name="org.mongodb.driver" level="WARN" />
+
 </configuration>
