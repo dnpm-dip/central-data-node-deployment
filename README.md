@@ -11,3 +11,8 @@ After having checked out this repository into a folder on the server, run
 With a running docker composite, call "docker compose run --rm siteLogDump". 
 This creates a folder called "siteAvailabilityLogDump" inside the "ccdn-data"
 docker volume and saves a .json dump named by todays date there.
+
+You can define output filename and a filter query by defining variables like so:
+```
+FILTER='{\"site\":\"UKJ\"}' FILENAME=ukjLog.json docker compose run --rm siteLogDump
+```
