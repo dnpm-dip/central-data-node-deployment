@@ -6,6 +6,9 @@
 # ("submission", "report" or "deletion") and "submittedAt" (ISO local date time), plus
 # "content", which is encrypted with a hybrid RSA-OAEP-SHA256 + AES-256-CBC scheme
 # (see RsaHybridEncryptionServiceImpl in the central-data-node repository).
+# A ciphertext too large for a single MongoDB document (> 15 MiB) is not stored in
+# "content.ciphertext", but in parts in the collection "largeBackupParts"; "content.ciphertextParts"
+# then lists the "_id"s of the parts in order (see MongodbPersistenceServiceImpl.splitEncrypted).
 #
 # Documents are streamed one by one out of the running "mongodb" service and decrypted
 # directly into the target folder, so no encrypted intermediate dump is written.
@@ -96,8 +99,9 @@ done
 
 
 # Runs a query against the backup collection. Mode "stats" prints "<count><SEP><ciphertext bytes>",
-# "list" prints the plain-text fields and "dump" additionally the encrypted content, one document
-# per line. The last line is always "__END__", so that a truncated stream can be detected.
+# "list" prints the plain-text fields and "dump" additionally a problem description (empty if the
+# document is fine) and the encrypted content, one document per line. A ciphertext stored in parts
+# is reassembled. The last line is always "__END__", so that a truncated stream can be detected.
 # Filter values are handed over as environment variables, so they need no quoting/escaping here.
 # (Output piped through cat: the snap-installed docker may fail to write into a redirected file)
 query_backups() {
@@ -122,15 +126,44 @@ query_backups() {
       if (e.MODE === "stats") {
         const r = db.backup.aggregate([
           { $match: filter },
-          { $group: { _id: null, n: { $sum: 1 }, bytes: { $sum: { $strLenBytes: { $ifNull: ["$content.ciphertext", ""] } } } } }
+          { $lookup: {
+              from: "largeBackupParts", localField: "content.ciphertextParts", foreignField: "_id",
+              pipeline: [{ $project: { _id: 0, len: { $strLenBytes: "$ciphertext" } } }], as: "parts"
+          } },
+          { $group: { _id: null, n: { $sum: 1 }, bytes: { $sum: { $add: [
+              { $strLenBytes: { $ifNull: ["$content.ciphertext", ""] } },
+              { $sum: "$parts.len" }
+          ] } } } }
         ]).toArray();
         print(r.length > 0 ? r[0].n + S + r[0].bytes : "0" + S + "0");
       } else {
         const projection = e.MODE === "dump" ? { _id: 0 } : { _id: 0, content: 0 };
+        // Returns [problem, ciphertext]: the ciphertext is either stored directly, or in parts
+        const ciphertextOf = d => {
+          const c = d.content;
+          if (c == null) return ["no content", ""];
+          if (typeof c.ciphertext === "string") return ["", c.ciphertext];
+          const ids = c.ciphertextParts;
+          if (!Array.isArray(ids) || ids.length === 0) return ["neither ciphertext nor ciphertextParts in content", ""];
+          const byId = new Map();
+          db.largeBackupParts.find({ _id: { $in: ids } }).forEach(p => byId.set(p._id.toHexString(), p));
+          const segments = [];
+          for (const id of ids) {
+            const p = byId.get(id.toHexString());
+            if (p == null) return ["ciphertext part " + id.toHexString() + " is missing", ""];
+            if (p.tan !== d.tan || p.site !== d.site || p.usecase !== d.usecase || p.type !== d.type)
+              return ["ciphertext part " + id.toHexString() + " belongs to another backup", ""];
+            segments.push(p.ciphertext);
+          }
+          return ["", segments.join("")];
+        };
         db.backup.find(filter, projection).sort({ submittedAt: 1 }).forEach(d => {
           const fields = [d.tan, d.site, d.usecase, d.type, d.submittedAt];
-          if (e.MODE === "dump")
-            fields.push(d.content.algorithm, d.content.encryptedKey, d.content.iv, d.content.ciphertext);
+          if (e.MODE === "dump") {
+            const [problem, ciphertext] = ciphertextOf(d);
+            const c = d.content || {};
+            fields.push(problem, c.algorithm, c.encryptedKey, c.iv, ciphertext);
+          }
           print(fields.join(S));
         });
       }
@@ -239,7 +272,7 @@ decrypt() { # <encryptedKey> <iv> <ciphertext>
 }
 
 # The stream is read from fd 3, so that nothing in the loop can accidentally consume it
-while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt algorithm encryptedKey iv ciphertext; do
+while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt problem algorithm encryptedKey iv ciphertext; do
   if [[ "$tan" == "__END__" ]]; then complete=1; break; fi
 
   rel="$(safe_name "$site")/$(safe_name "$usecase")/$(safe_name "$tan").$(safe_name "$type").json"
@@ -248,6 +281,12 @@ while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt algorithm encryp
 
   if [[ -e "$out" ]]; then
     skipped=$((skipped + 1))
+    continue
+  fi
+
+  if [[ -n "$problem" ]]; then
+    warn "Skipping $label: $problem"
+    failed=$((failed + 1))
     continue
   fi
 
