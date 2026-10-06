@@ -8,13 +8,19 @@ After having checked out this repository into a folder on the server, run
 "init.sh" to set up some folders, then run "docker compose up -d"
 
 ## How to extract site availability logs
-With a running docker composite, call "docker compose run --rm siteLogDump". 
+With a running docker composite, call "docker compose run --rm databaseDump". 
 This creates a folder called "siteAvailabilityLogDump" inside the "ccdn-data"
-docker volume and saves a .json dump named by todays date there.
+docker volume and saves a .json dump named `<collection>_<today's date>.json` there
+(e.g. `siteAvailabilityReports_2026-10-06.json`).
 
 You can define output filename and a filter query by defining variables like so:
 ```
-FILTER='{\"site\":\"UKJ\"}' FILENAME=ukjLog.json docker compose run --rm siteLogDump
+FILTER='{\"site\":\"UKJ\"}' FILENAME=ukjLog.json docker compose run --rm databaseDump
+```
+
+To dump a different collection of the `ccdn` database (default: `siteAvailabilityReports`), set `COLLECTION`:
+```
+COLLECTION=backup FILENAME=backup.json docker compose run --rm siteLogDump
 ```
 
 ## Backup encryption keypair
