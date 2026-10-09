@@ -99,9 +99,11 @@ done
 
 
 # Runs a query against the backup collection. Mode "stats" prints "<count><SEP><ciphertext bytes>",
-# "list" prints the plain-text fields and "dump" additionally a problem description (empty if the
-# document is fine) and the encrypted content, one document per line. A ciphertext stored in parts
-# is reassembled. The last line is always "__END__", so that a truncated stream can be detected.
+# "list" prints the plain-text fields and "dump" additionally the "_id" (as EJSON), a problem
+# description (empty if the document is fine) and the encrypted content, one document per line.
+# A ciphertext stored in parts is reassembled. Documents are ordered by submittedAt and _id; the
+# optional arguments <submittedAt> <_id EJSON> continue after that document (see the extraction).
+# The last line is always "__END__", so that a truncated stream can be detected.
 # Filter values are handed over as environment variables, so they need no quoting/escaping here.
 # (Output piped through cat: the snap-installed docker may fail to write into a redirected file)
 query_backups() {
@@ -109,6 +111,7 @@ query_backups() {
     -e MODE="$1" -e SEP="$SEP" \
     -e F_TAN="$F_TAN" -e F_SITE="$F_SITE" -e F_USECASE="$F_USECASE" -e F_TYPE="$F_TYPE" \
     -e F_FROM="$F_FROM" -e F_TO="$F_TO" -e F_RAW="$F_RAW" \
+    -e AFTER_AT="${2:-}" -e AFTER_ID="${3:-}" \
     mongodb mongosh --quiet ccdn --eval '
       const e = process.env;
       const list = v => v.split(",").map(s => s.trim()).filter(s => s.length > 0);
@@ -122,6 +125,11 @@ query_backups() {
       if (e.F_TO)      and.push({ submittedAt: { $lt:  e.F_TO } });
       if (e.F_RAW)     and.push(EJSON.parse(e.F_RAW));
       const filter = and.length > 0 ? { $and: and } : {};
+      // Resume position: only applied to the documents, not to the stats
+      const after = e.AFTER_ID ? [{ $or: [
+        { submittedAt: { $gt: e.AFTER_AT } },
+        { submittedAt: e.AFTER_AT, _id: { $gt: EJSON.parse(e.AFTER_ID) } }
+      ] }] : [];
       const S = e.SEP;
       if (e.MODE === "stats") {
         const r = db.backup.aggregate([
@@ -137,7 +145,7 @@ query_backups() {
         ]).toArray();
         print(r.length > 0 ? r[0].n + S + r[0].bytes : "0" + S + "0");
       } else {
-        const projection = e.MODE === "dump" ? { _id: 0 } : { _id: 0, content: 0 };
+        const projection = e.MODE === "dump" ? {} : { _id: 0, content: 0 };
         // Returns [problem, ciphertext]: the ciphertext is either stored directly, or in parts
         const ciphertextOf = d => {
           const c = d.content;
@@ -159,12 +167,12 @@ query_backups() {
         };
         // batchSize(1): fetch each document only when the previous one was consumed, so that the
         // cursor never idles past the cursor timeout of the server (10 min) while bash is still decrypting
-        db.backup.find(filter, projection).sort({ submittedAt: 1 }).batchSize(1).forEach(d => {
+        db.backup.find({ $and: [filter, ...after] }, projection).sort({ submittedAt: 1, _id: 1 }).batchSize(1).forEach(d => {
           const fields = [d.tan, d.site, d.usecase, d.type, d.submittedAt];
           if (e.MODE === "dump") {
             const [problem, ciphertext] = ciphertextOf(d);
             const c = d.content || {};
-            fields.push(problem, c.algorithm, c.encryptedKey, c.iv, ciphertext);
+            fields.push(EJSON.stringify(d._id), problem, c.algorithm, c.encryptedKey, c.iv, ciphertext);
           }
           print(fields.join(S));
         });
@@ -260,7 +268,7 @@ fi
 MANIFEST="$TARGET/manifest.tsv"
 [[ -f "$MANIFEST" ]] || printf 'tan\tsite\tusecase\ttype\tsubmittedAt\tfile\n' > "$MANIFEST"
 
-extracted=0 skipped=0 failed=0 complete=0 out_of_space=0 last=""
+extracted=0 skipped=0 failed=0 complete=0 out_of_space=0 last="" last_at="" last_id=""
 
 # Decrypts one document's content to stdout
 decrypt() { # <encryptedKey> <iv> <ciphertext>
@@ -273,52 +281,60 @@ decrypt() { # <encryptedKey> <iv> <ciphertext>
   printf '%s' "$3" | base64 -d | openssl enc -d -aes-256-cbc -K "$aes_key_hex" -iv "$iv_hex"
 }
 
-# The stream is read from fd 3, so that nothing in the loop can accidentally consume it
-while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt problem algorithm encryptedKey iv ciphertext; do
-  if [[ "$tan" == "__END__" ]]; then complete=1; break; fi
-  last="$type $tan ($site/$usecase, submitted $submittedAt)"
+# "docker compose exec" may lose the end of a large output (mongosh still exits with 0), so a stream
+# that ends without "__END__" is queried again, continuing after the last completely received document.
+# A partial last line is not processed, since "read" fails on a line without a terminating newline.
+while true; do
+  progress=0
+  # The stream is read from fd 3, so that nothing in the loop can accidentally consume it
+  while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt id problem algorithm encryptedKey iv ciphertext; do
+    if [[ "$tan" == "__END__" ]]; then complete=1; break; fi
+    last="$type $tan ($site/$usecase, submitted $submittedAt)" last_at="$submittedAt" last_id="$id" progress=1
 
-  rel="$(safe_name "$site")/$(safe_name "$usecase")/$(safe_name "$tan").$(safe_name "$type").json"
-  out="$TARGET/$rel"
-  label="$type $tan ($site/$usecase)"
+    rel="$(safe_name "$site")/$(safe_name "$usecase")/$(safe_name "$tan").$(safe_name "$type").json"
+    out="$TARGET/$rel"
+    label="$type $tan ($site/$usecase)"
 
-  if [[ -e "$out" ]]; then
-    skipped=$((skipped + 1))
-    continue
-  fi
+    if [[ -e "$out" ]]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
 
-  if [[ -n "$problem" ]]; then
-    warn "Skipping $label: $problem"
-    failed=$((failed + 1))
-    continue
-  fi
+    if [[ -n "$problem" ]]; then
+      warn "Skipping $label: $problem"
+      failed=$((failed + 1))
+      continue
+    fi
 
-  if [[ "$algorithm" != "$EXPECTED_ALGORITHM" ]]; then
-    warn "Skipping $label: unsupported algorithm '$algorithm'"
-    failed=$((failed + 1))
-    continue
-  fi
+    if [[ "$algorithm" != "$EXPECTED_ALGORITHM" ]]; then
+      warn "Skipping $label: unsupported algorithm '$algorithm'"
+      failed=$((failed + 1))
+      continue
+    fi
 
-  needed=$(( ${#ciphertext} * 3 / 4 + MIN_FREE_BYTES ))
-  if (( needed > $(free_bytes) )); then
-    warn "Stopping: less than ${MIN_FREE_MB}MB would remain in $TARGET."
-    out_of_space=1
-    break
-  fi
+    needed=$(( ${#ciphertext} * 3 / 4 + MIN_FREE_BYTES ))
+    if (( needed > $(free_bytes) )); then
+      warn "Stopping: less than ${MIN_FREE_MB}MB would remain in $TARGET."
+      out_of_space=1
+      break
+    fi
 
-  mkdir -p "$(dirname "$out")"
-  # Written under a temporary name first, so that no truncated file is mistaken as done on a rerun
-  if decrypt "$encryptedKey" "$iv" "$ciphertext" > "$out.part" && mv "$out.part" "$out"; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tan" "$site" "$usecase" "$type" "$submittedAt" "$rel" >> "$MANIFEST"
-    extracted=$((extracted + 1))
-    (( extracted % 50 == 0 )) && echo "... $extracted extracted"
-  else
-    rm -f "$out.part"
-    warn "Failed to decrypt $label"
-    failed=$((failed + 1))
-  fi
-done 3< <(query_backups dump)
-dump_pid=$!
+    mkdir -p "$(dirname "$out")"
+    # Written under a temporary name first, so that no truncated file is mistaken as done on a rerun
+    if decrypt "$encryptedKey" "$iv" "$ciphertext" > "$out.part" && mv "$out.part" "$out"; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tan" "$site" "$usecase" "$type" "$submittedAt" "$rel" >> "$MANIFEST"
+      extracted=$((extracted + 1))
+      (( extracted % 50 == 0 )) && echo "... $extracted extracted"
+    else
+      rm -f "$out.part"
+      warn "Failed to decrypt $label"
+      failed=$((failed + 1))
+    fi
+  done 3< <(query_backups dump "$last_at" "$last_id")
+  dump_pid=$!
+  [[ "$complete" == 1 || "$out_of_space" == 1 || "$progress" == 0 ]] && break
+  echo "... stream ended prematurely after $last; continuing from there"
+done
 
 unset "$PASSPHRASE_VAR"
 
@@ -330,7 +346,7 @@ if [[ "$complete" != 1 ]]; then
     # The document stream ended without "__END__": report how the query process (mongosh) ended
     dump_status=0
     wait "$dump_pid" || dump_status=$?
-    warn "The document stream from mongosh ended prematurely (exit status $dump_status)."
+    warn "The document stream from mongosh ended prematurely without any further document (exit status $dump_status)."
     (( dump_status == 137 )) && warn "Exit status 137 means the process was killed, most likely because it ran out of memory."
     warn "Last document received: ${last:-none}"
   fi
