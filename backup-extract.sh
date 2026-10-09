@@ -157,7 +157,9 @@ query_backups() {
           }
           return ["", segments.join("")];
         };
-        db.backup.find(filter, projection).sort({ submittedAt: 1 }).forEach(d => {
+        // batchSize(1): fetch each document only when the previous one was consumed, so that the
+        // cursor never idles past the cursor timeout of the server (10 min) while bash is still decrypting
+        db.backup.find(filter, projection).sort({ submittedAt: 1 }).batchSize(1).forEach(d => {
           const fields = [d.tan, d.site, d.usecase, d.type, d.submittedAt];
           if (e.MODE === "dump") {
             const [problem, ciphertext] = ciphertextOf(d);
