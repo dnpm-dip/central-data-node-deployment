@@ -260,7 +260,7 @@ fi
 MANIFEST="$TARGET/manifest.tsv"
 [[ -f "$MANIFEST" ]] || printf 'tan\tsite\tusecase\ttype\tsubmittedAt\tfile\n' > "$MANIFEST"
 
-extracted=0 skipped=0 failed=0 complete=0
+extracted=0 skipped=0 failed=0 complete=0 out_of_space=0 last=""
 
 # Decrypts one document's content to stdout
 decrypt() { # <encryptedKey> <iv> <ciphertext>
@@ -276,6 +276,7 @@ decrypt() { # <encryptedKey> <iv> <ciphertext>
 # The stream is read from fd 3, so that nothing in the loop can accidentally consume it
 while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt problem algorithm encryptedKey iv ciphertext; do
   if [[ "$tan" == "__END__" ]]; then complete=1; break; fi
+  last="$type $tan ($site/$usecase, submitted $submittedAt)"
 
   rel="$(safe_name "$site")/$(safe_name "$usecase")/$(safe_name "$tan").$(safe_name "$type").json"
   out="$TARGET/$rel"
@@ -301,6 +302,7 @@ while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt problem algorith
   needed=$(( ${#ciphertext} * 3 / 4 + MIN_FREE_BYTES ))
   if (( needed > $(free_bytes) )); then
     warn "Stopping: less than ${MIN_FREE_MB}MB would remain in $TARGET."
+    out_of_space=1
     break
   fi
 
@@ -316,11 +318,25 @@ while IFS="$SEP" read -r -u 3 tan site usecase type submittedAt problem algorith
     failed=$((failed + 1))
   fi
 done 3< <(query_backups dump)
+dump_pid=$!
 
 unset "$PASSPHRASE_VAR"
 
 echo
 echo "Extracted: $extracted, already present (skipped): $skipped, failed: $failed"
 echo "Output: $TARGET (index: $MANIFEST)"
-[[ "$complete" == 1 ]] || { warn "Not all matching documents were processed; rerun to resume."; exit 1; }
+if [[ "$complete" != 1 ]]; then
+  if [[ "$out_of_space" != 1 ]]; then
+    # The document stream ended without "__END__": report how the query process (mongosh) ended
+    dump_status=0
+    wait "$dump_pid" || dump_status=$?
+    warn "The document stream from mongosh ended prematurely (exit status $dump_status)."
+    (( dump_status == 137 )) && warn "Exit status 137 means the process was killed, most likely because it ran out of memory."
+    warn "Last document received: ${last:-none}"
+  fi
+  warn "Not all matching documents were processed; rerun to resume."
+  exit 1
+fi
+processed=$(( extracted + skipped + failed ))
+(( processed == COUNT )) || warn "Processed $processed document(s), but $COUNT matched at the start."
 [[ "$failed" == 0 ]] || exit 1
