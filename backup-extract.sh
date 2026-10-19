@@ -3,9 +3,11 @@
 # Extracts and decrypts documents from the "backup" collection of the CCDN MongoDB.
 #
 # Every backup document has the plain-text fields "tan", "site", "usecase", "type"
-# ("submission", "report" or "deletion") and "submittedAt" (ISO local date time), plus
-# "content", which is encrypted with a hybrid RSA-OAEP-SHA256 + AES-256-CBC scheme
+# ("submission", "report", "deletion" or "manual-deletion") and "submittedAt" (ISO local date time),
+# plus "content", which is encrypted with a hybrid RSA-OAEP-SHA256 + AES-256-CBC scheme
 # (see RsaHybridEncryptionServiceImpl in the central-data-node repository).
+# Only the deletion notices inserted by backup-delete.sh ("manual-deletion") have an unencrypted
+# "content" (the comment); they are not decrypted, but their plain-text fields are written as JSON.
 # A ciphertext too large for a single MongoDB document (> 15 MiB) is not stored in
 # "content.ciphertext", but in parts in the collection "largeBackupParts"; "content.ciphertextParts"
 # then lists the "_id"s of the parts in order (see MongodbPersistenceServiceImpl.splitEncrypted).
@@ -22,6 +24,7 @@ umask 077  # decrypted data is sensitive
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEP=$'\x1f'                          # field separator of the rows printed by mongosh
 EXPECTED_ALGORITHM="RSA-OAEP-SHA256+AES-256-CBC"
+MANUAL_DELETION_TYPE="manual-deletion"  # unencrypted, see backup-delete.sh
 PASSPHRASE_VAR=CCDN_BACKUP_KEY_PASSPHRASE
 
 usage() {
@@ -32,7 +35,7 @@ Filters (all optional and combined with AND; comma-separated lists match any of 
   -t, --tan TAN[,TAN...]         Transfer TAN(s)
   -s, --site CODE[,CODE...]      Site code(s), e.g. UKT,UKFR
   -u, --usecase UC[,UC...]       MTB and/or RD
-  -T, --type TYPE[,TYPE...]      submission, report and/or deletion
+  -T, --type TYPE[,TYPE...]      submission, report, deletion and/or manual-deletion
       --from DATE                submittedAt >= DATE (ISO, e.g. 2026-01-01 or 2026-01-01T12:00)
       --to DATE                  submittedAt <  DATE (exclusive)
       --filter JSON              Additional raw MongoDB filter on the unencrypted fields,
@@ -101,14 +104,15 @@ done
 # Runs a query against the backup collection. Mode "stats" prints "<count><SEP><ciphertext bytes>",
 # "list" prints the plain-text fields and "dump" additionally the "_id" (as EJSON), a problem
 # description (empty if the document is fine) and the encrypted content, one document per line.
-# A ciphertext stored in parts is reassembled. Documents are ordered by submittedAt and _id; the
+# A ciphertext stored in parts is reassembled. For a document of type $MANUAL_DELETION_TYPE, whose
+# content is not encrypted, "ciphertext" is instead its plain-text fields as base64-encoded JSON. Documents are ordered by submittedAt and _id; the
 # optional arguments <submittedAt> <_id EJSON> continue after that document (see the extraction).
 # The last line is always "__END__", so that a truncated stream can be detected.
 # Filter values are handed over as environment variables, so they need no quoting/escaping here.
 # (Output piped through cat: the snap-installed docker may fail to write into a redirected file)
 query_backups() {
   docker compose --project-directory "$REPO_DIR" exec -T \
-    -e MODE="$1" -e SEP="$SEP" \
+    -e MODE="$1" -e SEP="$SEP" -e MANUAL_DELETION_TYPE="$MANUAL_DELETION_TYPE" \
     -e F_TAN="$F_TAN" -e F_SITE="$F_SITE" -e F_USECASE="$F_USECASE" -e F_TYPE="$F_TYPE" \
     -e F_FROM="$F_FROM" -e F_TO="$F_TO" -e F_RAW="$F_RAW" \
     -e AFTER_AT="${2:-}" -e AFTER_ID="${3:-}" \
@@ -169,7 +173,13 @@ query_backups() {
         // cursor never idles past the cursor timeout of the server (10 min) while bash is still decrypting
         db.backup.find({ $and: [filter, ...after] }, projection).sort({ submittedAt: 1, _id: 1 }).batchSize(1).forEach(d => {
           const fields = [d.tan, d.site, d.usecase, d.type, d.submittedAt];
-          if (e.MODE === "dump") {
+          if (e.MODE === "dump" && d.type === e.MANUAL_DELETION_TYPE) {
+            // base64, since the comment in "content" may contain any characters, including SEP and newlines
+            const plain = { tan: d.tan, site: d.site, usecase: d.usecase, type: d.type,
+                            submittedAt: d.submittedAt, content: d.content };
+            fields.push(EJSON.stringify(d._id), "", "", "", "",
+                        Buffer.from(JSON.stringify(plain, null, 2)).toString("base64"));
+          } else if (e.MODE === "dump") {
             const [problem, ciphertext] = ciphertextOf(d);
             const c = d.content || {};
             fields.push(EJSON.stringify(d._id), problem, c.algorithm, c.encryptedKey, c.iv, ciphertext);
@@ -281,6 +291,15 @@ decrypt() { # <encryptedKey> <iv> <ciphertext>
   printf '%s' "$3" | base64 -d | openssl enc -d -aes-256-cbc -K "$aes_key_hex" -iv "$iv_hex"
 }
 
+# Writes one document's content to stdout: decrypted, or for type $MANUAL_DELETION_TYPE just decoded
+extract_content() { # <type> <encryptedKey> <iv> <ciphertext>
+  if [[ "$1" == "$MANUAL_DELETION_TYPE" ]]; then
+    printf '%s' "$4" | base64 -d
+  else
+    decrypt "$2" "$3" "$4"
+  fi
+}
+
 # "docker compose exec" may lose the end of a large output (mongosh still exits with 0), so a stream
 # that ends without "__END__" is queried again, continuing after the last completely received document.
 # A partial last line is not processed, since "read" fails on a line without a terminating newline.
@@ -306,7 +325,7 @@ while true; do
       continue
     fi
 
-    if [[ "$algorithm" != "$EXPECTED_ALGORITHM" ]]; then
+    if [[ "$type" != "$MANUAL_DELETION_TYPE" && "$algorithm" != "$EXPECTED_ALGORITHM" ]]; then
       warn "Skipping $label: unsupported algorithm '$algorithm'"
       failed=$((failed + 1))
       continue
@@ -321,7 +340,7 @@ while true; do
 
     mkdir -p "$(dirname "$out")"
     # Written under a temporary name first, so that no truncated file is mistaken as done on a rerun
-    if decrypt "$encryptedKey" "$iv" "$ciphertext" > "$out.part" && mv "$out.part" "$out"; then
+    if extract_content "$type" "$encryptedKey" "$iv" "$ciphertext" > "$out.part" && mv "$out.part" "$out"; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tan" "$site" "$usecase" "$type" "$submittedAt" "$rel" >> "$MANIFEST"
       extracted=$((extracted + 1))
       (( extracted % 50 == 0 )) && echo "... $extracted extracted"

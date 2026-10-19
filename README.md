@@ -62,3 +62,24 @@ Filters apply to the unencrypted fields `tan`, `site`, `usecase`, `type` (`submi
 See `./backup-extract.sh --help` for all options. Output is `<target>/<site>/<usecase>/<tan>.<type>.json`
 plus an index `<target>/manifest.tsv`. The decrypted files contain clinical data: delete them
 (and the private key) from the server once they're no longer needed.
+
+Deletion notices of type `manual-deletion` (see below) are not encrypted; they are extracted as
+`<tan>.manual-deletion.json` with their plain fields, including the comment in `content`.
+
+## How to manually delete backups
+With the mongodb service running, `./backup-delete.sh` deletes the backed up submission and report
+of the given TANs from the `backup` collection, along with their ciphertext parts in `largeBackupParts`
+and the report in `quarter-reports`. Deletion events are never touched. For each deleted
+submission-report pair, it inserts a deletion notice with the same plain fields (`tan`, `site`,
+`usecase`, `submittedAt` = time of the deletion), type `manual-deletion` and the unencrypted comment
+as `content` (`no-comment` if none was given):
+```
+# show what would be deleted
+./backup-delete.sh --dry-run TAN1 TAN2
+# delete, with a comment
+./backup-delete.sh -c "Withdrawn consent, ticket #123" TAN1 TAN2
+```
+Each TAN must have exactly one submission and one report with matching `site`, `usecase` and
+`submittedAt`, otherwise nothing at all is deleted; `--no-pair-check` deletes anyway, inserting one
+notice per `site` and `usecase` found. It warns about TANs with deletion events or without any
+submission or report. See `./backup-delete.sh --help` for all options.
