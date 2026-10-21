@@ -4,6 +4,10 @@
     "timeUnit": "SECONDS",
     "minNumSubmissionDownloads": 25
   },
+  "deletionEventPolling": {
+    "period": 1,
+    "timeUnit": "DAYS"
+  },
   "dataNodeIds": {
     "MTB": "KDKTUE005",
     "RD": "KDKTUE002"
