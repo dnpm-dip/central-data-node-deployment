@@ -72,3 +72,30 @@ services:
     volumes:
       - ccdn-data:/ccdn_data
       - './config:/ccdn_config'
+
+  # Statistical evaluations on the backups, run on demand, e.g.:
+  #   docker compose run --rm evaluation list
+  #   docker compose run --rm evaluation run submission-counts --site UKT --from 2026-01-01
+  # See https://github.com/dnpm-dip/cdn-evaluation-module and the README
+  evaluation:
+    image: ${EVALUATION_IMAGE:-dnpm-ccdn-evaluation}:${EVALUATION_IMAGE_TAG:-latest}
+    pull_policy: ${EVALUATION_PULL_POLICY:-missing}
+    restart: no
+    networks: [ persistence ]
+    profiles:
+      - "evaluation" #excludes from typical "docker compose up"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - CCDN_MONGODB_URI=${ENV_CCDN_MONGODB_URI:-mongodb://mongodb:27017/ccdn}
+      - CCDN_BACKUP_PRIVATE_KEY_PATH=/evaluation/key/${EVALUATION_KEY_FILENAME:-private.pem}
+      - CCDN_EVALUATION_OUTPUT_DIR=/evaluation/output   # "-e CCDN_EVALUATION_OUTPUT_DIR=" for JSON to stdout
+      - CCDN_BACKUP_KEY_PASSPHRASE   # passed through from the host if set, else prompted for
+      - CCDN_BFARM_MAPPINGS_CONFIG_FILE   # passed through if set (container path, e.g. under /ccdn_config)
+      - JAVA_OPTS                    # passed through if set, e.g. JAVA_OPTS=-Xmx4g
+      - TZ=${LOCAL_TIMEZONE:-Europe/Berlin}
+    volumes:
+      - '${EVALUATION_KEY_DIR:-./evaluation/key}:/evaluation/key:ro'
+      - '${EVALUATION_OUTPUT_DIR:-./evaluation/output}:/evaluation/output'
+      - './config:/ccdn_config:ro'

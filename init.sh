@@ -24,3 +24,6 @@ done
 
 if [ ! -f .env ]; then cp .env.template .env; fi
 
+
+# Folders for the evaluation service (backup private key, results), only accessible to the owner
+mkdir -p evaluation/key evaluation/output && chmod 700 evaluation evaluation/key

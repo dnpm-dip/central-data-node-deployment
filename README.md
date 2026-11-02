@@ -83,3 +83,28 @@ Each TAN must have exactly one submission and one report with matching `site`, `
 `submittedAt`, otherwise nothing at all is deleted; `--no-pair-check` deletes anyway, inserting one
 notice per `site` and `usecase` found. It warns about TANs with deletion events or without any
 submission or report. See `./backup-delete.sh --help` for all options.
+
+## How to run evaluations on the backups
+The `evaluation` service runs the [evaluation module](https://github.com/dnpm-dip/cdn-evaluation-module),
+which computes statistics on the backups (and exports them decrypted). It is excluded from
+`docker compose up` (profile `evaluation`) and run on demand with the mongodb service running:
+```
+# list the available statistics and their parameters / show all options
+docker compose run --rm evaluation list
+docker compose run --rm evaluation help
+# quarterly submission counts of 2026 for two sites
+docker compose run --rm evaluation run submission-counts --site UKT,UKFR --from 2026-01-01 --until 2027-01-01 --param period=quarter
+```
+Put the backup private key (see above) temporarily into `evaluation/key/private.pem` (folder and
+file name can be changed with `EVALUATION_KEY_DIR` and `EVALUATION_KEY_FILENAME` in `.env`).
+Its passphrase is prompted for, or taken from `CCDN_BACKUP_KEY_PASSPHRASE` in the host
+environment. The results are written to `evaluation/output` (`EVALUATION_OUTPUT_DIR`) as
+`<statistic>_<time>.json` plus one CSV per table; with `-e CCDN_EVALUATION_OUTPUT_DIR=` the JSON goes
+to stdout instead. For more heap, e.g. with large submissions, set `JAVA_OPTS=-Xmx4g` in the host
+environment. The container runs as root, so the result files belong to root.
+
+The results of `export` and `export-datenkranz` contain clinical data: delete them, like the
+private key, from the server once they're no longer needed.
+
+The image defaults to the locally built `dnpm-ccdn-evaluation:latest`; for the released one, set
+`EVALUATION_IMAGE=ghcr.io/dnpm-dip/cdn-evaluation-module` (and `EVALUATION_IMAGE_TAG`) in `.env`.
