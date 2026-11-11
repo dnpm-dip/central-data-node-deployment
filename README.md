@@ -105,6 +105,3 @@ environment. The container runs as root, so the result files belong to root.
 
 The results of `export` and `export-datenkranz` contain clinical data: delete them, like the
 private key, from the server once they're no longer needed.
-
-The image defaults to the locally built `dnpm-ccdn-evaluation:latest`; for the released one, set
-`EVALUATION_IMAGE=ghcr.io/dnpm-dip/cdn-evaluation-module` (and `EVALUATION_IMAGE_TAG`) in `.env`.

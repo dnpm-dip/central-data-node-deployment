@@ -78,8 +78,8 @@ services:
   #   docker compose run --rm evaluation run submission-counts --site UKT --from 2026-01-01
   # See https://github.com/dnpm-dip/cdn-evaluation-module and the README
   evaluation:
-    image: ${EVALUATION_IMAGE:-dnpm-ccdn-evaluation}:${EVALUATION_IMAGE_TAG:-latest}
-    pull_policy: ${EVALUATION_PULL_POLICY:-missing}
+    image: ${EVALUATION_IMAGE:-ghcr.io/dnpm-dip/cdn-evaluation-module}:${EVALUATION_IMAGE_TAG:-latest}
+    pull_policy: ${CCDN_PULL_POLICY:-always}
     restart: no
     networks: [ persistence ]
     profiles:
